@@ -8,7 +8,7 @@ volatile bool pid_update_flag = false;
 // =========================================================================
 // --- CONFIGURACIÓN DEL ESTABILIZADOR PID (SINTONIZADO) ---
 // =========================================================================
-double KP = 0.1;
+double KP = 0.2;
 double KI = 0.2;
 double KD = 0.01;
 double setpointX, inputX, outputX;
@@ -50,7 +50,7 @@ ISR(TIMER1_COMPA_vect) {
 }
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(1000000);
   Serial.println(F("Iniciando sistema con Timer1 y PID..."));
 
   // --- Inicialización de Sensores y Motores (sin cambios) ---
