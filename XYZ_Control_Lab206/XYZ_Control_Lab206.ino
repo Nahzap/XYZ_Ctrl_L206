@@ -1,6 +1,6 @@
 #include <Wire.h>
 #include <VL53L0X.h>
-#include <PID_v1.h>
+#include <PID_v1.h> //By Brett Beauregard <br3ttb@gmail.com> brettbeauregard.com
 
 // --- Variable de control para la interrupción del temporizador ---
 volatile bool pid_update_flag = false;
@@ -9,8 +9,8 @@ volatile bool pid_update_flag = false;
 // --- CONFIGURACIÓN DEL ESTABILIZADOR PID (SINTONIZADO) ---
 // =========================================================================
 double KP = 0.1;
-double KI = 0.15;
-double KD = 0.05;
+double KI = 0.2;
+double KD = 0.01;
 double setpointX, inputX, outputX;
 double setpointY, inputY, outputY;
 double setpointZ, inputZ, outputZ;
