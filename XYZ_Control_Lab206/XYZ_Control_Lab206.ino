@@ -1,218 +1,120 @@
-#include <Wire.h>
-#include <VL53L0X.h>
-#include <PID_v1.h> //By Brett Beauregard <br3ttb@gmail.com> brettbeauregard.com
+// =========================================================================
+// --- CONFIGURACIÓN DE PINES ---
+// =========================================================================
 
-// --- Variable de control para la interrupción del temporizador ---
-volatile bool pid_update_flag = false;
+// Pines para los potenciómetros que controlan los motores
+const byte potPinA = A0;
+const byte potPinB = A1;
 
-// =========================================================================
-// --- CONFIGURACIÓN DEL ESTABILIZADOR PID (SINTONIZADO) ---
-// =========================================================================
-double KP = 0.2;
-double KI = 0.2;
-double KD = 0.01;
-double setpointX, inputX, outputX;
-double setpointY, inputY, outputY;
-double setpointZ, inputZ, outputZ;
-PID pidX(&inputX, &outputX, &setpointX, KP, KI, KD, DIRECT);
-PID pidY(&inputY, &outputY, &setpointY, KP, KI, KD, DIRECT);
-PID pidZ(&inputZ, &outputZ, &setpointZ, KP, KI, KD, DIRECT);
+// Pines para el Driver L298N
+// Motor A
+const byte ENA = 3;  // Control de velocidad del Motor A (PWM)
+const byte IN1 = 6;  // Control de dirección del Motor A
+const byte IN2 = 7;  // Control de dirección del Motor A
 
-// =========================================================================
-// --- CONFIGURACIÓN DE CORRECCIÓN LINEAL (y = mx + b) ---
-// =========================================================================
-struct CorrectionParams {
-  float m;
-  float b;
-};
-CorrectionParams correctionX = { 10.0, 0.0 };
-CorrectionParams correctionY = { 10.0, 0.0 };
-CorrectionParams correctionZ = { 10.0, 0.0 };
+// Motor B
+const byte ENB = 11; // Control de velocidad del Motor B (PWM)
+const byte IN3 = 12; // Control de dirección del Motor B
+const byte IN4 = 13; // Control de dirección del Motor B
 
 // =========================================================================
-// --- CONFIGURACIÓN DE SENSORES Y MOTORES (Sin cambios) ---
+// --- PARÁMETROS DE CONTROL ---
 // =========================================================================
-const byte SENSOR_X_XSHUT_PIN = 2, SENSOR_Y_XSHUT_PIN = 4, SENSOR_Z_XSHUT_PIN = 5;
-const uint8_t SENSOR_X_ADDRESS = 0x30, SENSOR_Y_ADDRESS = 0x31, SENSOR_Z_ADDRESS = 0x32;
-VL53L0X sensorX, sensorY, sensorZ;
-const byte ENA = 3, IN1 = 6, IN2 = 7, ENB = 11, IN3 = 12, IN4 = 13;
-const byte potPinA = A0, potPinB = A1;
-const int umbralBajo = 337, umbralAlto = 675;
-const byte velocidadFija = 128;
 
-// =========================================================================
-// --- ¡NUEVO! RUTINA DE SERVICIO DE INTERRUPCIÓN (ISR) ---
-// =========================================================================
-// Esta función se ejecuta automáticamente cada vez que el Timer1 llega a la cuenta.
-// Se ejecuta exactamente cada 100ms.
-ISR(TIMER1_COMPA_vect) {
-  pid_update_flag = true;  // Activa la bandera para que el loop() haga los cálculos
-}
+// Umbrales para la "zona muerta" del potenciómetro
+// Entre 337 y 675 el motor estará detenido.
+const int umbralBajo = 337;
+const int umbralAlto = 675;
+
+// La potencia máxima que se aplicará al motor (0-255). 128 es aprox. 50%.
+const int POTENCIA_MAX = 128; 
+// La potencia mínima para que el motor empiece a moverse. Ajusta si es necesario.
+const int POTENCIA_MIN = 65;
+
 
 void setup() {
-  Serial.begin(1000000);
-  Serial.println(F("Iniciando sistema con Timer1 y PID..."));
+  // Iniciar comunicación serial a una velocidad alta para no perder datos.
+  Serial.begin(115200); 
+  Serial.println("Iniciando control de motores...");
 
-  // --- Inicialización de Sensores y Motores (sin cambios) ---
-  Wire.begin();
-  pinMode(SENSOR_X_XSHUT_PIN, OUTPUT);
-  pinMode(SENSOR_Y_XSHUT_PIN, OUTPUT);
-  pinMode(SENSOR_Z_XSHUT_PIN, OUTPUT);
-  digitalWrite(SENSOR_X_XSHUT_PIN, LOW);
-  digitalWrite(SENSOR_Y_XSHUT_PIN, LOW);
-  digitalWrite(SENSOR_Z_XSHUT_PIN, LOW);
-  delay(100);
-  initializeSensor(sensorX, SENSOR_X_XSHUT_PIN, SENSOR_X_ADDRESS, "Sensor X");
-  initializeSensor(sensorY, SENSOR_Y_XSHUT_PIN, SENSOR_Y_ADDRESS, "Sensor Y");
-  initializeSensor(sensorZ, SENSOR_Z_XSHUT_PIN, SENSOR_Z_ADDRESS, "Sensor Z");
+  // Configurar todos los pines de los motores como SALIDAS
   pinMode(ENA, OUTPUT);
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
   pinMode(ENB, OUTPUT);
   pinMode(IN3, OUTPUT);
   pinMode(IN4, OUTPUT);
+
+  // Asegurarse de que los motores estén detenidos al iniciar
   analogWrite(ENA, 0);
   analogWrite(ENB, 0);
-
-  delay(200);  // Esperar una lectura válida
-  inputX = (float)sensorX.readRangeContinuousMillimeters() / 128.0;
-  inputY = (float)sensorY.readRangeContinuousMillimeters() / 128.0;
-  inputZ = (float)sensorZ.readRangeContinuousMillimeters() / 128.0;
-
-  // --- Configurar los PIDs ---
-  pidX.SetMode(AUTOMATIC);
-  pidY.SetMode(AUTOMATIC);
-  pidZ.SetMode(AUTOMATIC);
-  pidX.SetOutputLimits(-255, 255);
-  pidY.SetOutputLimits(-255, 255);
-  pidZ.SetOutputLimits(-255, 255);
-
-  // --- ¡NUEVO! CONFIGURACIÓN DEL TIMER1 PARA 100ms ---
-  cli();  // Detener interrupciones
-  // Configurar Timer1 en modo CTC (Clear Timer on Compare Match)
-  TCCR1A = 0;
-  TCCR1B = 0;
-  TCNT1 = 0;
-  // Frecuencia de interrupción = 10Hz (cada 100ms)
-  // OCR1A = (Clock Speed / (Prescaler * Frecuencia)) - 1
-  // OCR1A = (8,000,000 / (256 * 10)) - 1 = 3124
-  OCR1A = 3124;
-  // Activar modo CTC (WGM12) y prescaler de 256 (CS12)
-  TCCR1B |= (1 << WGM12) | (1 << CS12);
-  // Habilitar la interrupción por comparación del Timer1
-  TIMSK1 |= (1 << OCIE1A);
-  sei();  // Reactivar interrupciones
-
-  Serial.println(F("\nSistema listo."));
+  Serial.println("Sistema listo. Mueve los potenciómetros.");
 }
 
 void loop() {
-  // El loop principal puede encargarse de tareas no críticas en el tiempo
-  // --- 1. LECTURA DE POTENCIÓMETROS Y CONTROL DE MOTORES ---
+  // 1. Leer el valor de cada potenciómetro (rango de 0 a 1023)
   int valorPotA = analogRead(potPinA);
   int valorPotB = analogRead(potPinB);
-  controlarMotor(ENA, IN1, IN2, valorPotA, false);
-  controlarMotor(ENB, IN3, IN4, valorPotB, false);
 
-  // --- 2. VERIFICAR SI ES HORA DE ACTUALIZAR EL PID ---
-  if (pid_update_flag) {
-    // --- Tareas que se ejecutan cada 100ms exactos ---
+  // 2. Controlar cada motor y obtener la potencia calculada
+  int potenciaA = controlarMotor(ENA, IN1, IN2, valorPotA, false); // false = no invertir giro
+  int potenciaB = controlarMotor(ENB, IN3, IN4, valorPotB, false); // false = no invertir giro
 
-    // Leer sensores
-    setpointX = (float)sensorX.readRangeContinuousMillimeters() / 128.0;
-    setpointY = (float)sensorY.readRangeContinuousMillimeters() / 128.0;
-    setpointZ = (float)sensorZ.readRangeContinuousMillimeters() / 128.0;
-
-    // Calcular PIDs
-    pidX.Compute();
-    pidY.Compute();
-    pidZ.Compute();
-    inputX += outputX;
-    inputY += outputY;
-    inputZ += outputZ;
-
-    // Aplicar corrección
-    float finalX = aplicarCorreccion(inputX, correctionX);
-    float finalY = aplicarCorreccion(inputY, correctionY);
-    float finalZ = aplicarCorreccion(inputZ, correctionZ);
-
-    // Imprimir datos
-    Serial.print(F("Pots: A="));
-    Serial.print(valorPotA);
-    Serial.print(F(", B="));
-    Serial.println(valorPotB);
-    Serial.print(F(" X -> Crudo: "));
-    printDistance(aplicarCorreccion(setpointX, correctionX));
-    Serial.print(F(" | Filtrado: "));
-    printDistance(finalX);
-    Serial.println();
-    Serial.print(F(" Y -> Crudo: "));
-    printDistance(aplicarCorreccion(setpointY, correctionY));
-    Serial.print(F(" | Filtrado: "));
-    printDistance(finalY);
-    Serial.println();
-    Serial.print(F(" Z -> Crudo: "));
-    printDistance(aplicarCorreccion(setpointZ, correctionZ));
-    Serial.print(F(" | Filtrado: "));
-    printDistance(finalZ);
-    Serial.println();
-    Serial.println(F("------------------------------------"));
-
-    pid_update_flag = false;  // Resetear la bandera hasta la próxima interrupción
-  }
+  // 3. Imprimir las potencias en el monitor serial en una sola línea
+  Serial.print("Potencia Motor A: ");
+  Serial.print(potenciaA);
+  Serial.print("  |  Potencia Motor B: ");
+  Serial.println(potenciaB);
+  
+  // Pequeña pausa para no saturar el monitor serial y hacer la lectura más fácil
+  delay(10); 
 }
 
-// =========================================================================
-// --- FUNCIONES AUXILIARES (sin cambios) ---
-// =========================================================================
-float aplicarCorreccion(float d, const CorrectionParams &p) {
-  return (p.m * d) + p.b;
-}
-void printDistance(float d) {
-  if (d < 0) {
-    Serial.print(F("Error"));
-    return;
-  }
-  int u = (int)d;
-  int m = (int)fabs((d - u) * 10000);
-  Serial.print(u);
-  Serial.print(F(","));
-  if (m < 1000) Serial.print(F("0"));
-  if (m < 100) Serial.print(F("0"));
-  if (m < 10) Serial.print(F("0"));
-  Serial.print(m);
-}
-void controlarMotor(byte pE, byte p1, byte p2, int v, bool i) {
-  byte d1 = HIGH, d2 = LOW;
+/**
+ * @brief Controla un motor (velocidad y dirección) basado en el valor de un potenciómetro.
+ * @param pE Pin Enable (PWM) del motor.
+ * @param p1 Pin de dirección 1 del motor.
+ * @param p2 Pin de dirección 2 del motor.
+ * @param v Valor del potenciómetro (0-1023).
+ * @param i Booleano para invertir la dirección del motor (true/false).
+ * @return La potencia calculada (0-255) que se está aplicando al motor.
+ */
+int controlarMotor(byte pE, byte p1, byte p2, int v, bool i) {
+  byte d1 = HIGH, d2 = LOW; // Dirección por defecto
+  int potencia = 0;
+
+  // Si se pide invertir, se cambian las señales de dirección
   if (i) {
     d1 = LOW;
     d2 = HIGH;
   }
+  
+  // --- Lógica de control con zona muerta ---
+  
+  // Zona BAJA (Giro en una dirección)
   if (v <= umbralBajo) {
-    digitalWrite(p1, d2);
+    // Escala la potencia desde POTENCIA_MIN (en umbralBajo) hasta POTENCIA_MAX (en 0)
+    potencia = map(v, umbralBajo, 0, POTENCIA_MIN, POTENCIA_MAX);
+    
+    digitalWrite(p1, d2); // Dirección invertida
     digitalWrite(p2, d1);
-    analogWrite(pE, velocidadFija);
-  } else if (v > umbralBajo && v <= umbralAlto) {
-    digitalWrite(p1, LOW);
-    digitalWrite(p2, LOW);
-    analogWrite(pE, 0);
-  } else {
-    digitalWrite(p1, d1);
+    analogWrite(pE, potencia);
+  } 
+  // Zona MUERTA (Motor detenido)
+  else if (v > umbralBajo && v <= umbralAlto) {
+    potencia = 0;
+    analogWrite(pE, 0); // Detiene el motor
+  } 
+  // Zona ALTA (Giro en la otra dirección)
+  else {
+    // Escala la potencia desde POTENCIA_MIN (en umbralAlto) hasta POTENCIA_MAX (en 1023)
+    potencia = map(v, umbralAlto, 1023, POTENCIA_MIN, POTENCIA_MAX);
+    
+    digitalWrite(p1, d1); // Dirección normal
     digitalWrite(p2, d2);
-    analogWrite(pE, velocidadFija);
+    analogWrite(pE, potencia);
   }
-}
-void initializeSensor(VL53L0X &s, byte p, uint8_t a, const char *n) {
-  digitalWrite(p, HIGH);
-  delay(10);
-  s.init();
-  s.setAddress(a);
-  s.setTimeout(500);
-  s.writeReg(0x09, s.readReg(0x09) | 0x02);
-  s.setMeasurementTimingBudget(200000);
-  s.startContinuous();
-  Serial.print(F("-> "));
-  Serial.print(n);
-  Serial.print(F(" inicializado en 0x"));
-  Serial.println(a, HEX);
+  
+  // Devuelve la potencia calculada para poder imprimirla
+  return potencia;
 }
