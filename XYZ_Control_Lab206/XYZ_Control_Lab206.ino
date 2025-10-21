@@ -1,43 +1,30 @@
 // =========================================================================
-// --- CONFIGURACIÓN DE PINES ---
+// --- CONFIGURACIÓN DE PINES Y PARÁMETROS ---
 // =========================================================================
-
-// Pines para los potenciómetros que controlan los motores
 const byte potPinA = A0;
 const byte potPinB = A1;
-
-// Pines para el Driver L298N
-// Motor A
-const byte ENA = 3;  // Control de velocidad del Motor A (PWM)
-const byte IN1 = 6;  // Control de dirección del Motor A
-const byte IN2 = 7;  // Control de dirección del Motor A
-
-// Motor B
-const byte ENB = 11; // Control de velocidad del Motor B (PWM)
-const byte IN3 = 12; // Control de dirección del Motor B
-const byte IN4 = 13; // Control de dirección del Motor B
+const byte sensorPin1 = A2;
+const byte sensorPin2 = A3;
+const byte ENA = 3, IN1 = 6, IN2 = 7;
+const byte ENB = 11, IN3 = 12, IN4 = 13;
+const int umbralBajo = 337, umbralAlto = 675;
+const int POTENCIA_MAX_MANUAL = 128, POTENCIA_MIN_MANUAL = 65;
 
 // =========================================================================
-// --- PARÁMETROS DE CONTROL ---
+// --- VARIABLES GLOBALES DEL SISTEMA ---
 // =========================================================================
+enum ControlMode { MANUAL, AUTO };
+ControlMode currentMode = MANUAL;
+int potenciaA = 0;
+int potenciaB = 0;
 
-// Umbrales para la "zona muerta" del potenciómetro
-// Entre 337 y 675 el motor estará detenido.
-const int umbralBajo = 337;
-const int umbralAlto = 675;
-
-// La potencia máxima que se aplicará al motor (0-255). 128 es aprox. 50%.
-const int POTENCIA_MAX = 128; 
-// La potencia mínima para que el motor empiece a moverse. Ajusta si es necesario.
-const int POTENCIA_MIN = 65;
-
+// ¡NUEVO! Buffer para almacenar los comandos entrantes
+char command_buffer[50];
+byte buffer_pos = 0;
 
 void setup() {
-  // Iniciar comunicación serial a una velocidad alta para no perder datos.
-  Serial.begin(115200); 
-  Serial.println("Iniciando control de motores...");
+  Serial.begin(1000000); // Tasa de baudios corregida a 1,000,000
 
-  // Configurar todos los pines de los motores como SALIDAS
   pinMode(ENA, OUTPUT);
   pinMode(IN1, OUTPUT);
   pinMode(IN2, OUTPUT);
@@ -45,76 +32,116 @@ void setup() {
   pinMode(IN3, OUTPUT);
   pinMode(IN4, OUTPUT);
 
-  // Asegurarse de que los motores estén detenidos al iniciar
-  analogWrite(ENA, 0);
-  analogWrite(ENB, 0);
-  Serial.println("Sistema listo. Mueve los potenciómetros.");
+  setMotorPower(ENA, IN1, IN2, 0);
+  setMotorPower(ENB, IN3, IN4, 0);
+  
+  // La cabecera se envía una sola vez para el plotter/análisis de datos
+  Serial.println("PotenciaA,PotenciaB,Sensor1,Sensor2");
 }
 
 void loop() {
-  // 1. Leer el valor de cada potenciómetro (rango de 0 a 1023)
-  int valorPotA = analogRead(potPinA);
-  int valorPotB = analogRead(potPinB);
+  // --- PASO 1: Revisar si hay nuevos comandos (lógica mejorada) ---
+  checkSerialCommands();
 
-  // 2. Controlar cada motor y obtener la potencia calculada
-  int potenciaA = controlarMotor(ENA, IN1, IN2, valorPotA, false); // false = no invertir giro
-  int potenciaB = controlarMotor(ENB, IN3, IN4, valorPotB, false); // false = no invertir giro
+  // --- PASO 2: Ejecutar el modo de control actual ---
+  if (currentMode == MANUAL) {
+    int valorPotA = analogRead(potPinA);
+    int valorPotB = analogRead(potPinB);
+    potenciaA = getManualPower(valorPotA);
+    potenciaB = getManualPower(valorPotB);
+    
+    setMotorPower(ENA, IN1, IN2, potenciaA);
+    setMotorPower(ENB, IN3, IN4, potenciaB);
+  } else { // Modo AUTO
+    // En modo AUTO, la potencia solo cambia cuando llega un comando nuevo.
+    // Mientras tanto, se mantiene la última potencia asignada.
+    setMotorPower(ENA, IN1, IN2, potenciaA);
+    setMotorPower(ENB, IN3, IN4, potenciaB);
+  }
 
-  // 3. Imprimir las potencias en el monitor serial en una sola línea
-  Serial.print("Potencia Motor A: ");
+  // --- PASO 3: Leer sensores y enviar datos (sin cambios) ---
+  int valorSensor1 = analogRead(sensorPin1);
+  int valorSensor2 = analogRead(sensorPin2);
+
   Serial.print(potenciaA);
-  Serial.print("  |  Potencia Motor B: ");
-  Serial.println(potenciaB);
-  
-  // Pequeña pausa para no saturar el monitor serial y hacer la lectura más fácil
-  delay(10); 
+  Serial.print(',');
+  Serial.print(potenciaB);
+  Serial.print(',');
+  Serial.print(valorSensor1);
+  Serial.print(',');
+  Serial.println(valorSensor2);
 }
 
-/**
- * @brief Controla un motor (velocidad y dirección) basado en el valor de un potenciómetro.
- * @param pE Pin Enable (PWM) del motor.
- * @param p1 Pin de dirección 1 del motor.
- * @param p2 Pin de dirección 2 del motor.
- * @param v Valor del potenciómetro (0-1023).
- * @param i Booleano para invertir la dirección del motor (true/false).
- * @return La potencia calculada (0-255) que se está aplicando al motor.
- */
-int controlarMotor(byte pE, byte p1, byte p2, int v, bool i) {
-  byte d1 = HIGH, d2 = LOW; // Dirección por defecto
-  int potencia = 0;
+// =========================================================================
+// --- ¡NUEVA FUNCIÓN MEJORADA PARA PROCESAR COMANDOS! ---
+// =========================================================================
+void checkSerialCommands() {
+  while (Serial.available() > 0) {
+    char inChar = (char)Serial.read();
 
-  // Si se pide invertir, se cambian las señales de dirección
-  if (i) {
-    d1 = LOW;
-    d2 = HIGH;
+    // Si recibimos un salto de línea, el comando está completo
+    if (inChar == '\n') {
+      command_buffer[buffer_pos] = '\0'; // Terminar el string
+
+      // --- Procesar el comando completo ---
+      if (strcmp(command_buffer, "M") == 0 || strcmp(command_buffer, "m") == 0) {
+        currentMode = MANUAL;
+        // No es necesario imprimir mensajes de depuración que interfieran con los datos CSV
+      } 
+      else if (strncmp(command_buffer, "A,", 2) == 0 || strncmp(command_buffer, "a,", 2) == 0) {
+        currentMode = AUTO;
+        // Parsear las potencias del comando "A,potA,potB"
+        char* token = strtok(command_buffer, ","); // "A"
+        token = strtok(NULL, ",");                 // potA
+        if (token != NULL) potenciaA = atoi(token);
+        token = strtok(NULL, ",");                 // potB
+        if (token != NULL) potenciaB = atoi(token);
+      }
+      
+      // Reiniciar el buffer para el próximo comando
+      buffer_pos = 0;
+      
+    } else {
+      // Añadir el carácter al buffer si hay espacio
+      if (buffer_pos < sizeof(command_buffer) - 1) {
+        command_buffer[buffer_pos++] = inChar;
+      }
+    }
   }
-  
-  // --- Lógica de control con zona muerta ---
-  
-  // Zona BAJA (Giro en una dirección)
+}
+
+// =========================================================================
+// --- FUNCIONES AUXILIARES (Sin cambios) ---
+// =========================================================================
+
+void setMotorPower(byte pinE, byte pin1, byte pin2, int power) {
+  power = constrain(power, -255, 255);
+  if (power > 0) {
+    digitalWrite(pin1, HIGH);
+    digitalWrite(pin2, LOW);
+    analogWrite(pinE, power);
+  } else if (power < 0) {
+    digitalWrite(pin1, LOW);
+    digitalWrite(pin2, HIGH);
+    analogWrite(pinE, -power);
+  } else {
+    digitalWrite(pin1, LOW);
+    digitalWrite(pin2, LOW);
+    analogWrite(pinE, 0);
+  }
+}
+
+int getManualPower(int v) {
+  int potencia = 0;
   if (v <= umbralBajo) {
-    // Escala la potencia desde POTENCIA_MIN (en umbralBajo) hasta POTENCIA_MAX (en 0)
-    potencia = map(v, umbralBajo, 0, POTENCIA_MIN, POTENCIA_MAX);
-    
-    digitalWrite(p1, d2); // Dirección invertida
-    digitalWrite(p2, d1);
-    analogWrite(pE, potencia);
+    potencia = map(v, umbralBajo, 0, POTENCIA_MIN_MANUAL, POTENCIA_MAX_MANUAL);
+    return -potencia;
   } 
-  // Zona MUERTA (Motor detenido)
   else if (v > umbralBajo && v <= umbralAlto) {
-    potencia = 0;
-    analogWrite(pE, 0); // Detiene el motor
+    return 0;
   } 
-  // Zona ALTA (Giro en la otra dirección)
   else {
-    // Escala la potencia desde POTENCIA_MIN (en umbralAlto) hasta POTENCIA_MAX (en 1023)
-    potencia = map(v, umbralAlto, 1023, POTENCIA_MIN, POTENCIA_MAX);
-    
-    digitalWrite(p1, d1); // Dirección normal
-    digitalWrite(p2, d2);
-    analogWrite(pE, potencia);
+    potencia = map(v, umbralAlto, 1023, POTENCIA_MIN_MANUAL, POTENCIA_MAX_MANUAL);
+    return potencia;
   }
-  
-  // Devuelve la potencia calculada para poder imprimirla
-  return potencia;
 }
