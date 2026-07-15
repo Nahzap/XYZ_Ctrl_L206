@@ -1,0 +1,59 @@
+# --- CMSIS no usado por este firmware (Makefile solo LL + Device) ---
+MycoViT_XY_Controller/Drivers/CMSIS/DSP/
+MycoViT_XY_Controller/Drivers/CMSIS/NN/
+MycoViT_XY_Controller/Drivers/CMSIS/RTOS/
+MycoViT_XY_Controller/Drivers/CMSIS/RTOS2/
+MycoViT_XY_Controller/Drivers/CMSIS/Core_A/
+MycoViT_XY_Controller/Drivers/CMSIS/docs/
+MycoViT_XY_Controller/Drivers/CMSIS/Documentation/
+MycoViT_XY_Controller/Drivers/CMSIS/Pack/
+MycoViT_XY_Controller/Drivers/CMSIS/DoxyGen/
+
+# --- Build STM32 (Makefile / Cube) ---
+**/build/
+**/*.o
+**/*.d
+**/*.elf
+**/*.hex
+**/*.bin
+**/*.map
+**/*.lst
+**/*.su
+**/*.cyclo
+
+# --- STM32 / toolchain local ---
+**/.stm32env
+**/*.log
+**/motor_control_*.log
+
+# --- IDE / editor ---
+**/.vscode/*
+!**/.vscode/extensions.json
+!**/.vscode/settings.json.example
+**/.idea/
+**/*.code-workspace
+
+# --- Python (si se abren tools desde aquí) ---
+**/__pycache__/
+**/.venv/
+**/CTRL_ENV/
+**/*.pyc
+
+# --- OS / basura ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Archivos grandes / binarios de respaldo ---
+**/*.zip
+**/*.rar
+**/*.7z
+**/*.pdf
+
+# --- Notas sueltas en la raíz del lab (no firmware) ---
+/20260607_1256_StrategyControl.md
+/STM32F7_MycoViT_Controller_XY.md
+
+# Docs
+Docs/
+Docs/mycovit_xy_controller/
