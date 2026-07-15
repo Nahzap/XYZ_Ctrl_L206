@@ -104,9 +104,10 @@ void app_serial_process(void)
   }
   else if (strncmp(line, "F,", 2) == 0 || strncmp(line, "f,", 2) == 0)
   {
-    /* F,<ref_x_adc>,<ref_y_adc> — C(z) fine local @ 1 MHz / LUT */
+    /* F,<ref_x_adc>,<ref_y_adc>[,gate_adc] — C(z) adaptativo */
     int ref_x = 0;
     int ref_y = 0;
+    int gate = -1;
     char *token = strtok(line, ",");   /* "F" */
     token = strtok(NULL, ",");
     if (token != NULL)
@@ -117,6 +118,11 @@ void app_serial_process(void)
     if (token != NULL)
     {
       ref_y = atoi(token);
+    }
+    token = strtok(NULL, ",");
+    if (token != NULL)
+    {
+      gate = atoi(token);
     }
     if (ref_x < 0)
     {
@@ -135,7 +141,14 @@ void app_serial_process(void)
       ref_y = 4095;
     }
     app_control_set_auto(0, 0);
-    app_cz_enable((uint16_t)ref_x, (uint16_t)ref_y);
+    if (gate >= 1)
+    {
+      app_cz_enable_gate((uint16_t)ref_x, (uint16_t)ref_y, (uint16_t)gate);
+    }
+    else
+    {
+      app_cz_enable((uint16_t)ref_x, (uint16_t)ref_y);
+    }
   }
   else if (strncmp(line, "I,", 2) == 0 || strncmp(line, "i,", 2) == 0)
   {

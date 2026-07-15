@@ -14,17 +14,18 @@ typedef enum
   ATOM_OFF
 } AtomState;
 
-/* LUT v7: mismos duty v6; t_on en µs (antes ms×1000). */
+/* LUT v15: anti bang-bang. C(z) solo usa idx≤2; energía ~½–⅓ de v14.
+ * Objetivo cerca de gate: pasos ~1–4 LSB (~3–12 µm), no spoil de 30–70 µm. */
 static const AtomLutEntry s_lut_a[APP_ATOM_LUT_LEN]
   __attribute__((section(".atom_lut"), used)) = {
-    {  160U,  2000U }, {  220U,  2000U }, {  300U,  3000U }, {  400U,  3000U },
-    {  520U,  4000U }, {  700U,  5000U }, {  920U,  7000U }, { 1200U, 10000U },
+    {  220U,   1200U }, {  320U,   1800U }, {  450U,   2500U }, {  650U,   3500U },
+    {  900U,   5000U }, { 1300U,   7000U }, { 1800U,   9000U }, { 2500U,  12000U },
 };
 
 static const AtomLutEntry s_lut_b[APP_ATOM_LUT_LEN]
   __attribute__((section(".atom_lut"), used)) = {
-    {  180U,  2000U }, {  240U,  2000U }, {  320U,  3000U }, {  420U,  3000U },
-    {  560U,  4000U }, {  740U,  5000U }, {  980U,  7000U }, { 1280U, 10000U },
+    {  240U,   1200U }, {  350U,   1800U }, {  480U,   2500U }, {  700U,   3500U },
+    {  950U,   5000U }, { 1350U,   7000U }, { 1900U,   9000U }, { 2600U,  12000U },
 };
 
 typedef struct
@@ -69,6 +70,13 @@ int app_atom_fire(MotorAxis axis, int sign, unsigned idx)
   {
     return -1;
   }
+  const AtomLutEntry *lut = (axis == MOTOR_A) ? s_lut_a : s_lut_b;
+  const AtomLutEntry *e = &lut[idx];
+  return app_atom_fire_duty(axis, sign, e->duty, e->t_on_us);
+}
+
+int app_atom_fire_duty(MotorAxis axis, int sign, unsigned duty, uint32_t t_on_us)
+{
   if (s_fsm.state != ATOM_IDLE)
   {
     return -1;
@@ -77,24 +85,24 @@ int app_atom_fire(MotorAxis axis, int sign, unsigned idx)
   {
     return -1;
   }
+  if (duty < 1U)
+  {
+    duty = 1U;
+  }
+  if (duty > (unsigned)MOTOR_DUTY_MAX)
+  {
+    duty = (unsigned)MOTOR_DUTY_MAX;
+  }
+  if (t_on_us == 0U)
+  {
+    t_on_us = 1U;
+  }
 
-  const AtomLutEntry *lut = (axis == MOTOR_A) ? s_lut_a : s_lut_b;
-  const AtomLutEntry *e = &lut[idx];
   int dir = (sign > 0) ? 1 : -1;
-  int duty = (int)e->duty;
-  if (duty < 1)
-  {
-    duty = 1;
-  }
-  if (duty > MOTOR_DUTY_MAX)
-  {
-    duty = MOTOR_DUTY_MAX;
-  }
-
   s_fsm.axis = axis;
-  s_fsm.duty = (int16_t)(dir * duty);
-  s_fsm.remain_us = (e->t_on_us == 0U) ? 1U : (uint32_t)e->t_on_us;
-  s_fsm.off_us = 500U; /* 500 µs coast tras ON */
+  s_fsm.duty = (int16_t)(dir * (int)duty);
+  s_fsm.remain_us = t_on_us;
+  s_fsm.off_us = 500U;
   s_fsm.state = ATOM_ON;
 
   app_motor_set_duty(axis, (int)s_fsm.duty);

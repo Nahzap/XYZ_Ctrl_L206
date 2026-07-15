@@ -1,13 +1,12 @@
 /**
   ******************************************************************************
   * @file    app_rt.h
-  * @brief   Real-time acquisition/control backbone @ 1 MHz.
+  * @brief   ADC XY sincronizado (TIM2) + filtros estables → C(z).
   *
- *          TIM6 TRGO triggers ADC1 (Y, PC3/IN13) and ADC2 (X, PA3/IN3) at 1 MHz.
- *          The ADC end-of-conversion interrupt is the 1 MHz control tick: it
- *          captures both samples (ADC2 read waits for EOC) and calls
- *          app_rt_control_hook() (where C(z) will live). Sampling time is
- *          15 ADC cycles. No DMA — no D-cache coherency issues.
+  *   TIM6 @ 1 MHz     → átomo (app_atom_tick_1us)
+  *   TIM2 @ 50 kHz    → TRGO dispara ADC1+ADC2 a la vez (X/Y sync)
+  *   Sample 480 cicl. → Tconv≈18.2 µs @ ADCCLK 27 MHz (cabe en 20 µs)
+  *   DMA HT/TC        → media recortada + EMA suave + C(z)
   ******************************************************************************
   */
 
@@ -20,30 +19,23 @@ extern "C" {
 
 #include <stdint.h>
 
-/* Target sampling/control rate. Kept for reference/telemetry. */
-#define APP_RT_HZ 1000000UL
+#define APP_RT_ADC_HZ          50000UL
+#define APP_RT_DMA_BLK         64U
+#define APP_RT_CZ_PERIOD_US    640U
 
-/* Configure ADC1/ADC2 for TIM6-triggered 1 MHz sampling, the ADC EOC
-   interrupt, then start the TIM6 time base. Call after MX_* init. */
 void app_rt_init(void);
+void app_rt_tim6_isr(void);
+void app_rt_dma_adc1_isr(void);
 
-/* Called from ADC_IRQHandler at 1 MHz. */
-void app_rt_isr(void);
-
-/* Latest RAW samples captured by the 1 MHz ISR (12-bit, 0..4095). */
 uint16_t app_rt_get_x(void);
 uint16_t app_rt_get_y(void);
-
-/* EMA-filtered samples (same domain). Preferred for telemetry / UI. */
 uint16_t app_rt_get_x_filtered(void);
 uint16_t app_rt_get_y_filtered(void);
-
-/* Total ISR ticks since boot (for measuring the effective rate). */
+uint16_t app_rt_get_x_dwell(void);
+uint16_t app_rt_get_y_dwell(void);
+uint16_t app_rt_get_x_fast(void);
+uint16_t app_rt_get_y_fast(void);
 uint32_t app_rt_tick_count(void);
-
-/* Control law hook @ 1 MHz ISR. Strong impl in app_cz.c (C(z) → LUT).
-   Keep budget < ~1 us (enteros; actuación decimada). */
-void app_rt_control_hook(uint16_t x, uint16_t y);
 
 #ifdef __cplusplus
 }

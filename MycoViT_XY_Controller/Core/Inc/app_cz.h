@@ -1,14 +1,12 @@
 /**
   ******************************************************************************
   * @file    app_cz.h
-  * @brief   C(z) fine: estimación + decisión + disparo en el mismo tick @ 1 MHz.
+  * @brief   C(z) deadband-settle: no pulsar cerca del target.
   *
-  * Activa: F,<ref_x_adc>,<ref_y_adc>
-  * Polaridad: I,<inv_x>,<inv_y>
-  * Desactiva: M / A,*,* (pwm≠0) / B
-  *
-  * Sincronía: ADC EOC → EMA e → ley → atom_fire (si idle). Un solo cuanto = 1 µs.
-  * COOLDOWN no es otra tasa de C(z): solo anti-apilado mecánico entre átomos.
+  * Política (LSB~12 µm):
+  *   ae <= QUIET  → motors 0, acumular SETTLED (sin átomos)
+  *   ae >= FIRE   → un micro-pulso y observar
+  *   entre medias → esperar (ruido / creep), no bang-bang
   ******************************************************************************
   */
 
@@ -21,19 +19,37 @@ extern "C" {
 
 #include <stdint.h>
 
-/* |e_adc| bajo esto → hold. ≥ paso típico átomo (log: idx0 spoil si gate=2–3). */
-#define APP_CZ_GATE_ADC       8
-/* Anti-apilado entre átomos (µs). La ley sigue evaluándose cada tick. */
-#define APP_CZ_COOLDOWN_US    200000U
+#define APP_CZ_GATE_DEFAULT       1
+/* Quiet: ≤2 LSB (~24 µm) → NUNCA disparar. */
+#define APP_CZ_QUIET_ADD          1
+/* Solo disparar si error ≥3 LSB (~36 µm). */
+#define APP_CZ_FIRE_MIN_ADD       2
+#define APP_CZ_SETTLE_US     300000U
+#define APP_CZ_MAX_FIRES         16U
+
+#define APP_CZ_STEP_NUM           1
+#define APP_CZ_STEP_DEN          16
+
+#define APP_CZ_SENS_Q12_INIT   768U
+#define APP_CZ_SENS_Q12_MIN    128U
+#define APP_CZ_SENS_Q12_MAX   4000U
+
+#define APP_CZ_DUTY_MIN         35U
+#define APP_CZ_DUTY_MAX        160U
+#define APP_CZ_TON_MIN_US      150U
+#define APP_CZ_TON_MAX_US      800U
+#define APP_CZ_OBSERVE_US    350000U
+#define APP_CZ_INIT_COOL_US   60000U
 
 void app_cz_init(void);
 void app_cz_enable(uint16_t ref_x_adc, uint16_t ref_y_adc);
+void app_cz_enable_gate(uint16_t ref_x_adc, uint16_t ref_y_adc, uint16_t gate_adc);
 void app_cz_disable(void);
 int  app_cz_enabled(void);
+int  app_cz_hold_active(void);
+int  app_cz_settled(void);
 void app_cz_set_invert(int inv_x, int inv_y);
-
-/* Path caliente @ 1 MHz: estima, decide y dispara átomo (si idle). */
-void app_cz_on_sample(uint16_t x_adc, uint16_t y_adc);
+void app_cz_tick_fast(uint16_t x_adc, uint16_t y_adc, uint16_t dt_us);
 
 #ifdef __cplusplus
 }

@@ -90,7 +90,21 @@ void app_control_tick_1ms(void)
     s_power_b = 0;
   }
 
-  /* Coarse @ 1 kHz. No pisar el eje mientras el átomo corre @ 1 µs. */
+  /*
+   * Con C(z) armado el fine posee los motores.
+   * Si el átomo no está ON, PWM debe ser 0 — NUNCA reaplicar s_power
+   * del approach host (A,±pwm): eso spoilaba HOLD → ±50…160 µm.
+   */
+  if (app_cz_enabled())
+  {
+    if (!app_atom_busy())
+    {
+      app_motor_set(MOTOR_A, 0);
+      app_motor_set(MOTOR_B, 0);
+    }
+    return;
+  }
+
   if (!app_atom_busy())
   {
     control_apply_motors();
@@ -110,7 +124,7 @@ void app_control_set_manual(void)
 
 void app_control_set_auto(int power_a, int power_b)
 {
-  /* Coarse no nulo → host retoma. A,0,0 no apaga C(z) (FOV observa). */
+  /* Coarse no nulo → host retoma. Abortar átomo para no bloquear PWM. */
   if (power_a != 0 || power_b != 0)
   {
     app_cz_disable();
@@ -147,7 +161,11 @@ const char *app_control_state_str(void)
   }
   if (app_cz_enabled())
   {
-    return "FINE";
+    if (app_cz_settled())
+    {
+      return "SETTLED";
+    }
+    return app_cz_hold_active() ? "HOLD" : "FINE";
   }
   switch (s_mode)
   {
@@ -160,6 +178,12 @@ const char *app_control_state_str(void)
 
 int app_control_settled(void)
 {
+  /* Con C(z) armado: solo el latch micrométrico. A,0,0 NO implica settled
+   * (el host interpretaba HOLD+settled=1 y mostraba t=300 falso). */
+  if (app_cz_enabled())
+  {
+    return app_cz_settled() ? 1 : 0;
+  }
   if (s_mode == CTRL_BRAKE)
   {
     return 1;

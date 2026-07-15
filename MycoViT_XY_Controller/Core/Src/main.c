@@ -45,7 +45,8 @@
 /* USER CODE BEGIN PD */
 /* Telemetry decimation in ms. 0 = stream every main-loop iteration (maximum
    throughput, bounded only by the UART/VCP link). */
-#define TELEMETRY_INTERVAL_MS 0U
+/* Telemetría a máxima tasa (0 = cada vuelta del main). La UI host decima. */
+#define TELEMETRY_INTERVAL_MS 1U
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -169,7 +170,7 @@ int main(void)
     if ((g_tick_ms - last_tlm_ms) >= TELEMETRY_INTERVAL_MS)
     {
       last_tlm_ms = g_tick_ms;
-      /* EMA @ 1 MHz (RT_EMA_SHIFT): telemetría estable; raw queda en getters. */
+      /* EMA N=3 (sigue el ADC). Raw en app_rt_get_x/y si hace falta. */
       uint16_t sensor1 = app_rt_get_y_filtered();
       uint16_t sensor2 = app_rt_get_x_filtered();
       printf("%d,%d,%u,%u,%s,%d\r\n",

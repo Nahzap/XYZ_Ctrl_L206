@@ -27,13 +27,16 @@ extern "C" {
 typedef struct
 {
   uint16_t duty;     /* 1..MOTOR_DUTY_MAX (=ARR): CCR nativo */
-  uint16_t t_on_us;  /* duración ON en microsegundos (tick RT 1 MHz) */
+  uint32_t t_on_us;  /* duración ON en microsegundos (tick RT 1 MHz) */
 } AtomLutEntry;
 
 void app_atom_init(void);
 
 /* Dispara un mini-pulso. Retorna 0 si OK, -1 si idx inválido o busy. */
 int app_atom_fire(MotorAxis axis, int sign, unsigned idx);
+
+/* Pulso con duty/t_on explícitos (slewing C(z) / cal). duty 1..ARR. */
+int app_atom_fire_duty(MotorAxis axis, int sign, unsigned duty, uint32_t t_on_us);
 
 void app_atom_abort(void);
 

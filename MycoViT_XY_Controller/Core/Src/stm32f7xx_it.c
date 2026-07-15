@@ -228,16 +228,27 @@ void DMA1_Stream3_IRQHandler(void)
 }
 
 /**
-  * @brief This function handles ADC1, ADC2 and ADC3 global interrupts.
+  * @brief TIM6 update: átomo @ 1 µs (misma base que TRGO ADC).
+  */
+void TIM6_DAC_IRQHandler(void)
+{
+  app_rt_tim6_isr();
+}
+
+/**
+  * @brief DMA2 Stream0 (ADC1 Y): HT/TC → EMA + C(z) @ 100 kHz.
+  */
+void DMA2_Stream0_IRQHandler(void)
+{
+  app_rt_dma_adc1_isr();
+}
+
+/**
+  * @brief ADC1/2/3 — ya no se usa para XY (DMA). Dejar vacío.
   */
 void ADC_IRQHandler(void)
 {
-  /* USER CODE BEGIN ADC_IRQn 0 */
-  app_rt_isr();
-  /* USER CODE END ADC_IRQn 0 */
-  /* USER CODE BEGIN ADC_IRQn 1 */
-
-  /* USER CODE END ADC_IRQn 1 */
+  /* XY via DMA; no EOC path. */
 }
 
 /**
